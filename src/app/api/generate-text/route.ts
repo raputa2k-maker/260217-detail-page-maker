@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateSectionText } from '@/lib/ai/text-generator';
+import { getMockSectionContent } from '@/lib/ai/mock-data';
 import type { SectionType } from '@/types/section';
 import type { ProductInput } from '@/types/product';
 
@@ -7,6 +8,7 @@ import type { ProductInput } from '@/types/product';
  * POST /api/generate-text
  *
  * 특정 섹션의 텍스트 콘텐츠를 AI로 생성합니다.
+ * AI API 호출 실패 시 Mock 데이터로 자동 폴백합니다.
  * Body: { sectionType: SectionType, productInput: ProductInput }
  */
 export async function POST(request: NextRequest) {
@@ -38,7 +40,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const content = await generateSectionText(sectionType, productInput);
+    // AI API 호출 시도, 실패 시 Mock 데이터로 폴백
+    let content;
+    try {
+      content = await generateSectionText(sectionType, productInput);
+    } catch (aiError) {
+      console.warn(
+        `[generate-text] AI API 호출 실패, Mock 데이터로 폴백:`,
+        aiError instanceof Error ? aiError.message : aiError,
+      );
+      content = getMockSectionContent(sectionType, productInput);
+    }
 
     return NextResponse.json({ content });
   } catch (error) {

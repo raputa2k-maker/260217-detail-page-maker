@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateSectionImage } from '@/lib/ai/image-generator';
+import { getMockImage } from '@/lib/ai/mock-data';
 import type { ProductInput } from '@/types/product';
 
 /** 이미지 유형 */
@@ -9,6 +10,7 @@ type ImageType = 'hero' | 'detail' | 'beforeAfter' | 'scenario' | 'background';
  * POST /api/generate-image
  *
  * AI로 이미지를 생성합니다.
+ * AI API 호출 실패 시 Mock 이미지(SVG 플레이스홀더)로 자동 폴백합니다.
  * Body: { productInput: ProductInput, imageType: ImageType, description?: string }
  */
 export async function POST(request: NextRequest) {
@@ -41,7 +43,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await generateSectionImage(productInput, imageType, description);
+    // AI API 호출 시도, 실패 시 Mock 이미지로 폴백
+    let result;
+    try {
+      result = await generateSectionImage(productInput, imageType, description);
+    } catch (aiError) {
+      console.warn(
+        `[generate-image] AI API 호출 실패, Mock 이미지로 폴백:`,
+        aiError instanceof Error ? aiError.message : aiError,
+      );
+      result = getMockImage(imageType, productInput.productName);
+    }
 
     return NextResponse.json(result);
   } catch (error) {
