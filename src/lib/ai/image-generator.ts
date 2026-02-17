@@ -96,43 +96,29 @@ export async function generateSectionImage(
     const client = getGeminiClient();
     const prompt = buildImagePrompt(productInput, imageType, description);
 
-    const response = await client.models.generateContent({
+    const response = await client.models.generateImages({
       model: IMAGE_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }],
-        },
-      ],
+      prompt: prompt,
       config: {
-        responseModalities: ['IMAGE', 'TEXT'],
+        numberOfImages: 1,
+        aspectRatio: '3:4',
       },
     });
 
-    // 응답에서 인라인 이미지 데이터 추출
-    const candidates = response.candidates;
-    if (!candidates || candidates.length === 0) {
-      console.warn(`[image-generator] No candidates in response for ${imageType}`);
+    // 응답에서 이미지 데이터 추출
+    const images = response.generatedImages;
+    if (!images || images.length === 0) {
+      console.warn(`[image-generator] No images in response for ${imageType}`);
       return { url: generatePlaceholder(imageType, productInput.productName), alt };
     }
 
-    const parts = candidates[0].content?.parts;
-    if (!parts || parts.length === 0) {
-      console.warn(`[image-generator] No parts in response for ${imageType}`);
-      return { url: generatePlaceholder(imageType, productInput.productName), alt };
+    const imageData = images[0].image;
+    if (imageData && imageData.imageBytes) {
+      const dataUrl = `data:image/png;base64,${imageData.imageBytes}`;
+      return { url: dataUrl, alt };
     }
 
-    // 이미지 데이터가 포함된 파트 찾기
-    for (const part of parts) {
-      if (part.inlineData && part.inlineData.data && part.inlineData.mimeType) {
-        const { mimeType, data } = part.inlineData;
-        const dataUrl = `data:${mimeType};base64,${data}`;
-        return { url: dataUrl, alt };
-      }
-    }
-
-    // 이미지 파트를 찾지 못한 경우
-    console.warn(`[image-generator] No inline image data found in response for ${imageType}`);
+    console.warn(`[image-generator] No image bytes in response for ${imageType}`);
     return { url: generatePlaceholder(imageType, productInput.productName), alt };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

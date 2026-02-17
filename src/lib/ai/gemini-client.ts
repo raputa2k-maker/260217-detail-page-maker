@@ -9,11 +9,11 @@ import { GoogleGenAI } from '@google/genai';
 
 const API_KEY = process.env.GOOGLE_AI_API_KEY || '';
 
-/** 텍스트 생성용 모델 (Gemini 2.0 Flash) */
-export const TEXT_MODEL = 'gemini-2.0-flash';
+/** 텍스트 생성용 모델 (Gemini 2.5 Pro) */
+export const TEXT_MODEL = 'gemini-2.5-pro';
 
-/** 이미지 생성용 모델 (Gemini 2.0 Flash Experimental - Imagen 지원) */
-export const IMAGE_MODEL = 'gemini-2.0-flash-exp';
+/** 이미지 생성용 모델 (Imagen 3 - 고품질 이미지 생성) */
+export const IMAGE_MODEL = 'imagen-3.0-generate-002';
 
 let client: GoogleGenAI | null = null;
 
