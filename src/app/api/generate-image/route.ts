@@ -3,6 +3,9 @@ import { generateSectionImage } from '@/lib/ai/image-generator';
 import { getMockImage } from '@/lib/ai/mock-data';
 import type { ProductInput } from '@/types/product';
 
+/** Vercel 서버리스 함수 최대 실행 시간 (초) */
+export const maxDuration = 60;
+
 /** 이미지 유형 */
 type ImageType = 'hero' | 'detail' | 'beforeAfter' | 'scenario' | 'background';
 

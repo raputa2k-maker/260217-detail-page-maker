@@ -4,6 +4,9 @@ import { getMockSectionContent } from '@/lib/ai/mock-data';
 import type { SectionType } from '@/types/section';
 import type { ProductInput } from '@/types/product';
 
+/** Vercel 서버리스 함수 최대 실행 시간 (초) */
+export const maxDuration = 60;
+
 /**
  * POST /api/generate-text
  *

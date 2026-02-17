@@ -10,6 +10,12 @@ import type { ProductInput } from '@/types/product';
 import { getGeminiClient, IMAGE_MODEL } from './gemini-client';
 import { buildImagePrompt, type ImageType } from './prompts';
 
+/** 최대 재시도 횟수 */
+const MAX_RETRIES = 2;
+
+/** 재시도 간 대기 시간 (ms) */
+const RETRY_DELAY_MS = 2000;
+
 /** 생성된 이미지 결과 */
 export interface GeneratedImageResult {
   /** 이미지 URL (base64 data URL 또는 placeholder) */
@@ -37,11 +43,14 @@ const PLACEHOLDER_COLORS: Record<ImageType, { bg: string; fg: string }> = {
 };
 
 /**
+ * 지정된 밀리초만큼 대기합니다.
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * placeholder SVG 이미지를 base64 data URL로 생성합니다.
- *
- * @param imageType - 이미지 유형
- * @param productName - 상품명
- * @returns base64 인코딩된 SVG data URL
  */
 function generatePlaceholder(imageType: ImageType, productName: string): string {
   const colors = PLACEHOLDER_COLORS[imageType];
@@ -60,9 +69,6 @@ function generatePlaceholder(imageType: ImageType, productName: string): string 
 
 /**
  * XML 특수 문자를 이스케이프합니다.
- *
- * @param str - 이스케이프할 문자열
- * @returns 이스케이프된 문자열
  */
 function escapeXml(str: string): string {
   return str
@@ -78,12 +84,8 @@ function escapeXml(str: string): string {
  *
  * Gemini API의 멀티모달 생성 기능을 활용하여 이미지를 생성합니다.
  * 생성된 이미지는 base64 data URL 형태로 반환됩니다.
- * API 호출 실패 또는 이미지 데이터가 없는 경우 placeholder 이미지를 반환합니다.
- *
- * @param productInput - 상품 입력 데이터
- * @param imageType - 생성할 이미지 유형
- * @param description - 추가 이미지 설명 (선택)
- * @returns 생성된 이미지의 URL과 대체 텍스트
+ * API 호출 실패 시 최대 2회까지 자동으로 재시도합니다.
+ * 모든 시도가 실패한 경우 placeholder 이미지를 반환합니다.
  */
 export async function generateSectionImage(
   productInput: ProductInput,
@@ -92,51 +94,71 @@ export async function generateSectionImage(
 ): Promise<GeneratedImageResult> {
   const alt = `${productInput.productName} - ${IMAGE_ALT_TEXT[imageType]}`;
 
-  try {
-    const client = getGeminiClient();
-    const prompt = buildImagePrompt(productInput, imageType, description);
+  let lastError: Error | null = null;
 
-    const response = await client.models.generateContent({
-      model: IMAGE_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }],
-        },
-      ],
-      config: {
-        responseModalities: ['IMAGE', 'TEXT'],
-      },
-    });
-
-    // 응답에서 인라인 이미지 데이터 추출
-    const candidates = response.candidates;
-    if (!candidates || candidates.length === 0) {
-      console.warn(`[image-generator] No candidates in response for ${imageType}`);
-      return { url: generatePlaceholder(imageType, productInput.productName), alt };
-    }
-
-    const parts = candidates[0].content?.parts;
-    if (!parts || parts.length === 0) {
-      console.warn(`[image-generator] No parts in response for ${imageType}`);
-      return { url: generatePlaceholder(imageType, productInput.productName), alt };
-    }
-
-    // 이미지 데이터가 포함된 파트 찾기
-    for (const part of parts) {
-      if (part.inlineData && part.inlineData.data && part.inlineData.mimeType) {
-        const { mimeType, data } = part.inlineData;
-        const dataUrl = `data:${mimeType};base64,${data}`;
-        return { url: dataUrl, alt };
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`[image-generator] Retry attempt ${attempt}/${MAX_RETRIES} for ${imageType}`);
+        await delay(RETRY_DELAY_MS * attempt);
       }
-    }
 
-    // 이미지 파트를 찾지 못한 경우
-    console.warn(`[image-generator] No inline image data found in response for ${imageType}`);
-    return { url: generatePlaceholder(imageType, productInput.productName), alt };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[image-generator] Failed to generate ${imageType} image:`, errorMessage);
-    return { url: generatePlaceholder(imageType, productInput.productName), alt };
+      const client = getGeminiClient();
+      const prompt = buildImagePrompt(productInput, imageType, description);
+
+      console.log(`[image-generator] Generating ${imageType} image (attempt ${attempt + 1}/${MAX_RETRIES + 1}) with model: ${IMAGE_MODEL}`);
+
+      const response = await client.models.generateContent({
+        model: IMAGE_MODEL,
+        contents: prompt,
+        config: {
+          responseModalities: ['IMAGE', 'TEXT'],
+        },
+      });
+
+      // 응답 구조 디버그 로깅
+      const candidates = response.candidates;
+      if (!candidates || candidates.length === 0) {
+        console.warn(`[image-generator] No candidates in response for ${imageType}. Full response keys:`, Object.keys(response));
+        throw new Error('No candidates in API response');
+      }
+
+      const parts = candidates[0].content?.parts;
+      if (!parts || parts.length === 0) {
+        console.warn(`[image-generator] No parts in response for ${imageType}. Candidate:`, JSON.stringify(candidates[0]).substring(0, 500));
+        throw new Error('No parts in API response candidate');
+      }
+
+      // 이미지 데이터가 포함된 파트 찾기
+      for (const part of parts) {
+        if (part.inlineData && part.inlineData.data && part.inlineData.mimeType) {
+          const { mimeType, data } = part.inlineData;
+          console.log(`[image-generator] Successfully generated ${imageType} image (${mimeType}, ${Math.round(data.length / 1024)}KB base64)`);
+          const dataUrl = `data:${mimeType};base64,${data}`;
+          return { url: dataUrl, alt };
+        }
+      }
+
+      // 이미지 파트를 찾지 못한 경우 - 파트 타입 로깅
+      const partTypes = parts.map((p) => {
+        if (p.text) return 'text';
+        if (p.inlineData) return `inlineData(${p.inlineData.mimeType || 'no-mime'})`;
+        return `unknown(${Object.keys(p).join(',')})`;
+      });
+      console.warn(`[image-generator] No inline image data found for ${imageType}. Part types: [${partTypes.join(', ')}]`);
+      throw new Error(`No inline image data in response. Parts: [${partTypes.join(', ')}]`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(
+        `[image-generator] Attempt ${attempt + 1}/${MAX_RETRIES + 1} failed for ${imageType}:`,
+        lastError.message,
+      );
+    }
   }
+
+  console.error(
+    `[image-generator] All ${MAX_RETRIES + 1} attempts failed for ${imageType}. Last error:`,
+    lastError?.message,
+  );
+  return { url: generatePlaceholder(imageType, productInput.productName), alt };
 }

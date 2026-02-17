@@ -127,13 +127,26 @@ export default function Home() {
 
       const imageResults = await Promise.allSettled(
         imageRequests.map(async ({ imageType }) => {
-          const res = await fetch('/api/generate-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ productInput: input, imageType }),
-          });
-          if (!res.ok) return { url: '', alt: imageType };
-          return await res.json();
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 55000);
+          try {
+            const res = await fetch('/api/generate-image', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ productInput: input, imageType }),
+              signal: controller.signal,
+            });
+            if (!res.ok) {
+              console.warn(`[image] ${imageType} 요청 실패: ${res.status}`);
+              return { url: '', alt: imageType };
+            }
+            return await res.json();
+          } catch (fetchError) {
+            console.warn(`[image] ${imageType} fetch 에러:`, fetchError);
+            return { url: '', alt: imageType };
+          } finally {
+            clearTimeout(timeout);
+          }
         }),
       );
 
@@ -182,7 +195,7 @@ export default function Home() {
         metadata: {
           createdAt: new Date().toISOString(),
           generationTime,
-          aiModel: 'gemini-2.0-flash',
+          aiModel: 'gemini-3-pro',
         },
       });
 
